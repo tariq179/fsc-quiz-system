@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>FSC Quiz | Student</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            min-height: 100vh;
+            padding: 20px;
+            color: white;
+        }
+        
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        
+        .card {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 20px;
+        }
+        
+        input {
+            width: 100%;
+            padding: 15px;
+            margin: 15px 0;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+        }
+        
+        button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #a855f7, #ec4899);
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .timer {
+            text-align: center;
+            font-size: 48px;
+            font-weight: bold;
+            font-family: monospace;
+            margin: 20px 0;
+        }
+        
+        .subject {
+            display: inline-block;
+            background: #a855f7;
+            padding: 5px 15px;
+            border-radius: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .question {
+            font-size: 18px;
+            margin: 20px 0;
+            line-height: 1.4;
+        }
+        
+        .option {
+            background: rgba(255,255,255,0.1);
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .option:active {
+            transform: scale(0.98);
+        }
+        
+        .score {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.8);
+            padding: 12px;
+            border-radius: 10px;
+            text-align: center;
+            font-weight: bold;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .feedback {
+            text-align: center;
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="joinCard" class="card">
+            <h2>📚 FSC Quiz Championship</h2>
+            <p>Enter your name to join the quiz</p>
+            <input type="text" id="studentName" placeholder="Your Full Name">
+            <button onclick="joinQuiz()">Join Quiz 🚀</button>
+        </div>
+        
+        <div id="quizCard" class="card hidden">
+            <div class="timer" id="timer">10</div>
+            <div class="subject" id="subject">Biology</div>
+            <div class="question" id="question">Loading...</div>
+            <div id="options"></div>
+            <div class="feedback" id="feedback"></div>
+        </div>
+        
+        <div class="score" id="score">Score: 0</div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    <script src="config.js"></script>
+    <script>
+        let studentId = null;
+        let studentName = "";
+        let answered = false;
+        let timerInterval;
+        
+        function joinQuiz() {
+            studentName = document.getElementById('studentName').value.trim();
+            if(!studentName) {
+                alert("Please enter your name");
+                return;
+            }
+            
+            studentId = Date.now().toString();
+            
+            // Save to Firebase
+            firebase.database().ref('players/' + studentId).set({
+                name: studentName,
+                joinedAt: Date.now()
+            });
+            
+            firebase.database().ref('scores/' + studentId).set({
+                score: 0,
+                Biology: 0,
+                Chemistry: 0,
+                Physics: 0,
+                English: 0
+            });
+            
+            document.getElementById('joinCard').classList.add('hidden');
+            document.getElementById('quizCard').classList.remove('hidden');
+            
+            // Listen for questions
+            listenForQuestions();
+            
+            // Listen for score updates
+            firebase.database().ref('scores/' + studentId).on('value', (snap) => {
+                const data = snap.val();
+                document.getElementById('score').innerHTML = `Score: ${data?.score || 0}`;
+            });
+        }
+        
+        function listenForQuestions() {
+            firebase.database().ref('currentQuestion/').on('value', (snapshot) => {
+                const data = snapshot.val();
+                if(data && data.active && !answered) {
+                    displayQuestion(data);
+                }
+            });
+        }
+        
+        function displayQuestion(data) {
+            answered = false;
+            document.getElementById('feedback').innerHTML = '';
+            document.getElementById('subject').textContent = data.question.subject;
+            document.getElementById('question').textContent = data.question.text;
+            
+            const optionsDiv = document.getElementById('options');
+            optionsDiv.innerHTML = '';
+            data.question.options.forEach((opt, idx) => {
+                const optDiv = document.createElement('div');
+                optDiv.className = 'option';
+                optDiv.textContent = opt;
+                optDiv.onclick = () => submitAnswer(idx, data);
+                optionsDiv.appendChild(optDiv);
+            });
+            
+            // Timer
+            if(timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                const timeLeft = Math.max(0, Math.ceil((data.endTime - Date.now()) / 1000));
+                document.getElementById('timer').textContent = timeLeft;
+                
+                if(timeLeft === 0 && !answered) {
+                    clearInterval(timerInterval);
+                    submitAnswer(-1, data);
+                }
+            }, 100);
+        }
+        
+        function submitAnswer(selectedIdx, data) {
+            if(answered) return;
+            answered = true;
+            clearInterval(timerInterval);
+            
+            const responseTime = (Date.now() - data.startTime) / 1000;
+            const isCorrect = (selectedIdx === data.question.correct);
+            let points = 0;
+            
+            if(isCorrect && responseTime <= 10) {
+                points = Math.max(1, Math.floor(10 - responseTime));
+            }
+            
+            // Update score in Firebase
+            const scoreRef = firebase.database().ref('scores/' + studentId);
+            scoreRef.transaction((current) => {
+                if(current) {
+                    current.score = (current.score || 0) + points;
+                    const subject = data.question.subject;
+                    current[subject] = (current[subject] || 0) + points;
+                }
+                return current;
+            });
+            
+            // Show feedback
+            const feedbackDiv = document.getElementById('feedback');
+            if(isCorrect) {
+                feedbackDiv.innerHTML = `✅ Correct! +${points} points`;
+                feedbackDiv.style.background = 'rgba(16,185,129,0.3)';
+            } else {
+                feedbackDiv.innerHTML = `❌ Wrong! Correct answer: ${data.question.options[data.question.correct]}`;
+                feedbackDiv.style.background = 'rgba(239,68,68,0.3)';
+            }
+            
+            // Disable options
+            document.querySelectorAll('.option').forEach(opt => {
+                opt.style.opacity = '0.5';
+                opt.style.pointerEvents = 'none';
+            });
+        }
+    </script>
+</body>
+</html>
